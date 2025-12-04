@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AV Contact Manager
- * Description: V3.1 - Secure form with Datepicker, Delete capability, Responsive Admin, and GDPR compliance. Submit button CSS update.
- * Version: 3.1
+ * Description: V4.0 - Secure form with Datepicker, SMTP Support, GDPR compliance, and Admin Management.
+ * Version: 4.0
  * Author: Silver Sirp
  */
 
@@ -33,13 +33,14 @@ class AV_Contact_Manager {
         add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
-        
-        // Handle Delete Action
         add_action( 'admin_post_av_delete_entry', array( $this, 'handle_delete_entry' ) );
+
+        // SMTP Hook
+        add_action( 'phpmailer_init', array( $this, 'configure_smtp' ) );
     }
 
     /**
-     * ACTIVATION & DB
+     * 1. ACTIVATION & DB
      */
     public function activate_plugin() {
         global $wpdb;
@@ -77,47 +78,60 @@ class AV_Contact_Manager {
         wp_clear_scheduled_hook( 'av_daily_cleanup_event' );
     }
 
-    // GDPR: Delete entries older than 1 year
     public function cleanup_old_entries() {
         global $wpdb;
         $wpdb->query( $wpdb->prepare( "DELETE FROM {$this->table_name} WHERE time < %s", date( 'Y-m-d H:i:s', strtotime( '-1 year' ) ) ) );
     }
 
     /**
-     * ASSETS (CSS/JS)
+     * 2. ASSETS
      */
     public function enqueue_frontend_assets() {
         global $post;
-        // Conditional Loading: Only if shortcode is present
         if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'av_contact_form' ) ) {
-            
-            // CSP Header
             header( "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://ajax.googleapis.com; style-src 'self' 'unsafe-inline' https://ajax.googleapis.com;" );
-
-            // Scripts
             wp_enqueue_script( 'jquery-ui-datepicker' );
-            wp_enqueue_script( 'av-script', plugins_url( 'js/av-script.js', __FILE__ ), array('jquery', 'jquery-ui-datepicker'), '3.0', true );
-
-            // Styles
+            wp_enqueue_script( 'av-script', plugins_url( 'js/av-script.js', __FILE__ ), array('jquery', 'jquery-ui-datepicker'), '4.0', true );
             wp_enqueue_style( 'jquery-ui-style', 'https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css' );
-            wp_enqueue_style( 'av-style', plugins_url( 'css/av-style.css', __FILE__ ), array(), '3.0' );
-            
-            // Pass localized data to JS
-            wp_localize_script( 'av-script', 'av_vars', array(
-                'ajax_url' => admin_url( 'admin-ajax.php' )
-            ));
+            wp_enqueue_style( 'av-style', plugins_url( 'css/av-style.css', __FILE__ ), array(), '4.0' );
         }
     }
 
     public function enqueue_admin_assets( $hook ) {
-        if ( 'toplevel_page_av-contact-entries' !== $hook ) {
-            return;
-        }
+        if ( 'toplevel_page_av-contact-entries' !== $hook ) return;
         wp_enqueue_style( 'av-admin-style', plugins_url( 'css/av-admin.css', __FILE__ ), array(), '3.0' );
     }
 
     /**
-     * FRONTEND LOGIC
+     * 3. SMTP CONFIGURATION
+     */
+    public function configure_smtp( $phpmailer ) {
+        $smtp_host = get_option( 'av_smtp_host' );
+        
+        // Only configure if Host is set
+        if ( ! empty( $smtp_host ) ) {
+            $phpmailer->isSMTP();
+            $phpmailer->Host       = $smtp_host;
+            $phpmailer->SMTPAuth   = true;
+            $phpmailer->Port       = get_option( 'av_smtp_port', 465 );
+            $phpmailer->Username   = get_option( 'av_smtp_user' );
+            $phpmailer->Password   = get_option( 'av_smtp_pass' );
+            
+            // Auto-detect encryption based on port
+            if ( $phpmailer->Port == 465 ) {
+                $phpmailer->SMTPSecure = 'ssl';
+            } elseif ( $phpmailer->Port == 587 ) {
+                $phpmailer->SMTPSecure = 'tls';
+            }
+            
+            // Force the "From" address to match the SMTP user to prevent spoofing errors
+            $phpmailer->From = get_option( 'av_sender_email', $phpmailer->Username );
+            $phpmailer->FromName = 'Andres Vago';
+        }
+    }
+
+    /**
+     * 4. FRONTEND LOGIC
      */
     private function get_client_ip() {
         $ip = $_SERVER['REMOTE_ADDR'];
@@ -140,23 +154,21 @@ class AV_Contact_Manager {
         return true;
     }
 
-public function render_shortcode() {
+    public function render_shortcode() {
         ob_start();
-        
-        // FIX: Check for REQUEST_METHOD and Nonce, not the button name
         if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
             $this->handle_submission();
         }
-        
         $this->display_form();
         return ob_get_clean();
     }
 
     private function handle_submission() {
-        if ( ! isset( $_POST['_av_nonce'] ) || ! wp_verify_nonce( $_POST['_av_nonce'], 'av_submit_form' ) ) {
+        // 1. Validation
+        if ( ! wp_verify_nonce( $_POST['_av_nonce'], 'av_submit_form' ) ) {
             echo '<div class="av-msg error">Turvaviga. Laadige leht uuesti.</div>'; return;
         }
-        if ( ! empty( $_POST['av_website'] ) ) { echo '<div class="av-msg success">Saadetud!</div>'; return; } // Honeypot
+        if ( ! empty( $_POST['av_website'] ) ) { echo '<div class="av-msg success">Saadetud!</div>'; return; }
         
         $ip = $this->get_client_ip();
         if ( ! $this->check_rate_limit( $ip ) ) {
@@ -173,10 +185,8 @@ public function render_shortcode() {
         if ( empty( $name ) || empty( $email ) || ! is_email( $email ) ) {
             echo '<div class="av-msg error">Vigased andmed. Kontrollige välju.</div>'; return;
         }
-        if ( ! empty( $date ) && ! preg_match( '/^\d{2}\.\d{2}\.\d{4}$/', $date ) ) {
-            echo '<div class="av-msg error">Kuupäev peab olema PP.KK.AAAA</div>'; return;
-        }
 
+        // 2. Save to DB
         global $wpdb;
         $saved = $wpdb->insert( $this->table_name, array(
             'time' => current_time( 'mysql' ), 'name' => $name, 'email' => $email,
@@ -185,17 +195,31 @@ public function render_shortcode() {
         ));
 
         if ( $saved ) {
-            // Verify Email Delivery
-            $admin_sent = $this->send_admin_email( $name, $email, $event, $date, $loc, $desc );
-            $client_sent = $this->send_client_confirmation( $name, $email, $event, $date );
+            // 3. DEBUG: Capture the specific SMTP error
+            global $ts_mail_errors;
+            $ts_mail_errors = array();
 
-            if ( $admin_sent && $client_sent ) {
+            // Hook into WordPress error handling
+            add_action( 'wp_mail_failed', function( $error ) {
+                global $ts_mail_errors;
+                $ts_mail_errors[] = $error->get_error_message();
+                
+                // Try to get technical details
+                if ( isset( $error->error_data['phpmailer_exception'] ) ) {
+                    $ts_mail_errors[] = $error->error_data['phpmailer_exception']->getMessage();
+                }
+            } );
+
+            // Try sending
+            $admin_sent = $this->send_admin_email( $name, $email, $event, $date, $loc, $desc );
+            
+            // Check results
+            if ( $admin_sent ) {
+                $this->send_client_confirmation( $name, $email, $event, $date ); // Send client email if admin succeeded
                 echo '<div class="av-msg success">Päring saadetud! Kinnitus on teie e-mailil.</div>';
-            } elseif ( $admin_sent ) {
-                echo '<div class="av-msg success">Päring saadetud, kuid kinnituskirja ei õnnestunud saata.</div>';
             } else {
-                echo '<div class="av-msg error">Andmed salvestati, kuid e-maili saatmine ebaõnnestus.</div>';
-                error_log( 'AV Plugin: Mail sending failed.' );
+                // PRINT THE ERROR
+                echo '<div class="av-msg error">SMTP VIGA: ' . implode( ' | ', $ts_mail_errors ) . '</div>';
             }
         } else {
             echo '<div class="av-msg error">Andmebaasi viga.</div>';
@@ -205,28 +229,17 @@ public function render_shortcode() {
     private function send_admin_email( $name, $email, $event, $date, $loc, $desc ) {
         $to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
         $safe_name = str_replace( ["\r", "\n"], '', $name );
+        // Reply-To allows you to hit reply to the customer, even though the email is sent via SMTP
         $headers = array( 'Content-Type: text/plain; charset=UTF-8', "Reply-To: $safe_name <$email>" );
         $body = "Nimi: $name\nE-mail: $email\nSündmus: $event\nKuupäev: $date\nKoht: $loc\n\nKirjeldus:\n$desc";
         return wp_mail( $to, "Päring: $event ($date)", $body, $headers );
     }
 
     private function send_client_confirmation( $name, $email, $event, $date ) {
-        // Use the new Sender Email setting, or default to noreply@yourdomain.ee
-        $sender_email = get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] );
-        
-        $subject = "Kinnitus: Teie päring on vastu võetud";
-        $body  = "Tere $name,\n\n";
-        $body .= "Aitäh kirjutamast! Olen teie päringu ($event, $date) kätte saanud.\n\n";
-        $body .= "Vastan teile esimesel võimalusel.\n\n";
-        $body .= "Lugupidamisega,\nAndres Vago";
-        
-        // The "From" header now uses the domain email, avoiding the Spam flag
-        $headers = array( 
-            'Content-Type: text/plain; charset=UTF-8', 
-            "From: Andres Vago <$sender_email>" 
-        );
-        
-        return wp_mail( $email, $subject, $body, $headers );
+        // "From" is handled automatically by configure_smtp now to prevent spam flags
+        $headers = array( 'Content-Type: text/plain; charset=UTF-8' );
+        $body = "Tere $name,\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\nAndres Vago";
+        return wp_mail( $email, "Kinnitus: Päring vastu võetud", $body, $headers );
     }
 
     private function display_form() {
@@ -261,7 +274,7 @@ public function render_shortcode() {
             </div>
             
             <div class="av-actions">
-                <input type="submit" name="av_contact_submit" value="Saada päring" class="button button-primary">
+                <input type="submit" name="av_contact_submit" value="Saada Päring" class="button button-primary">
                 <span class="av-loader" style="display:none;">⏳ Saatmine...</span>
             </div>
             <p class="av-gdpr-note"><small>Isikuandmeid säilitatakse 1 aasta.</small></p>
@@ -270,7 +283,7 @@ public function render_shortcode() {
     }
 
     /**
-     * ADMIN & DELETE
+     * 5. ADMIN SETTINGS
      */
     public function add_admin_menu() {
         add_menu_page( 'Päringud', 'Päringud', 'av_view_submissions', 'av-contact-entries', array( $this, 'render_admin_page' ), 'dashicons-email', 26 );
@@ -278,8 +291,14 @@ public function render_shortcode() {
     }
 
     public function register_settings() {
+        // General
         register_setting( 'av_contact_settings', 'av_recipient_email', 'sanitize_email' );
-        register_setting( 'av_contact_settings', 'av_sender_email', 'sanitize_email' ); // New Field
+        register_setting( 'av_contact_settings', 'av_sender_email', 'sanitize_email' );
+        // SMTP
+        register_setting( 'av_contact_settings', 'av_smtp_host', 'sanitize_text_field' );
+        register_setting( 'av_contact_settings', 'av_smtp_port', 'absint' );
+        register_setting( 'av_contact_settings', 'av_smtp_user', 'sanitize_text_field' );
+        register_setting( 'av_contact_settings', 'av_smtp_pass', 'sanitize_text_field' );
     }
 
     public function render_settings_page() {
@@ -288,93 +307,83 @@ public function render_shortcode() {
             <h1>Kontaktivormi Seaded</h1>
             <form method="post" action="options.php">
                 <?php settings_fields( 'av_contact_settings' ); do_settings_sections( 'av_contact_settings' ); ?>
+                
+                <h2>Üldseaded</h2>
                 <table class="form-table">
                     <tr>
-                        <th scope="row">Teavituse saaja e-mail:</th>
-                        <td>
-                            <input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email', 'andres.vago@gmail.com') ); ?>" class="regular-text">
-                            <p class="description">Siia saadetakse päringud (Sinu Gmail).</p>
-                        </td>
+                        <th scope="row">Teavituse saaja:</th>
+                        <td><input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email', 'andres.vago@gmail.com') ); ?>" class="regular-text"><p class="description">Sinu isiklik email.</p></td>
                     </tr>
                     <tr>
-                        <th scope="row">Kirja saatja e-mail (From):</th>
-                        <td>
-                            <input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option('av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME']) ); ?>" class="regular-text">
-                            <p class="description">See peab lõppema sinu domeeniga (nt info@andresvago.ee). <strong>Ära pane siia Gmaili aadressi.</strong></p>
-                        </td>
+                        <th scope="row">Saatja aadress (From):</th>
+                        <td><input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option('av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME']) ); ?>" class="regular-text"><p class="description">Peab ühtima SMTP kasutajaga (tavaliselt).</p></td>
                     </tr>
                 </table>
+
+                <hr>
+                <h2>SMTP Seaded (E-mail Server)</h2>
+                <p class="description">Sisesta siia oma veebimajutuse (nt Zone) e-maili andmed.</p>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">SMTP Host:</th>
+                        <td><input type="text" name="av_smtp_host" value="<?php echo esc_attr( get_option('av_smtp_host') ); ?>" class="regular-text" placeholder="nt. smtp.zone.ee"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">SMTP Port:</th>
+                        <td><input type="number" name="av_smtp_port" value="<?php echo esc_attr( get_option('av_smtp_port', 465) ); ?>" class="small-text"> (Tavaliselt 465 SSL-i jaoks)</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">SMTP Kasutaja:</th>
+                        <td><input type="text" name="av_smtp_user" value="<?php echo esc_attr( get_option('av_smtp_user') ); ?>" class="regular-text" placeholder="info@sinudomeen.ee"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">SMTP Parool:</th>
+                        <td><input type="password" name="av_smtp_pass" value="<?php echo esc_attr( get_option('av_smtp_pass') ); ?>" class="regular-text"></td>
+                    </tr>
+                </table>
+                
                 <?php submit_button(); ?>
             </form>
         </div>
         <?php
     }
 
-    // Process Delete Request
     public function handle_delete_entry() {
         if ( ! current_user_can( 'av_view_submissions' ) ) wp_die( 'Õigused puuduvad' );
         check_admin_referer( 'av_delete_action' );
-
         $id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
-        if ( $id ) {
-            global $wpdb;
-            $wpdb->delete( $this->table_name, array( 'id' => $id ) );
-        }
-        wp_redirect( admin_url( 'admin.php?page=av-contact-entries&msg=deleted' ) );
-        exit;
+        if ( $id ) { global $wpdb; $wpdb->delete( $this->table_name, array( 'id' => $id ) ); }
+        wp_redirect( admin_url( 'admin.php?page=av-contact-entries&msg=deleted' ) ); exit;
     }
 
     public function render_admin_page() {
         global $wpdb;
         $entries = $wpdb->get_results( "SELECT * FROM {$this->table_name} ORDER BY time DESC" );
-        
         if ( isset( $_GET['msg'] ) && $_GET['msg'] === 'deleted' ) echo '<div class="notice notice-success"><p>Kirje kustutatud.</p></div>';
         ?>
         <div class="wrap">
             <h1>Sissetulnud Päringud</h1>
             <div class="av-table-container">
             <table class="wp-list-table widefat fixed striped av-responsive-table">
-                <thead>
-                    <tr>
-                        <th width="120">Kuupäev</th>
-                        <th>Nimi / Email</th>
-                        <th>Sündmus / Aeg</th>
-                        <th>Koht</th>
-                        <th>Tegevused</th>
-                    </tr>
-                </thead>
+                <thead><tr><th width="120">Kuupäev</th><th>Nimi / Email</th><th>Sündmus</th><th>Koht</th><th>Tegevused</th></tr></thead>
                 <tbody>
-                    <?php if ( ! empty( $entries ) ) : ?>
-                        <?php foreach ( $entries as $entry ) : ?>
-                            <tr>
-                                <td data-label="Kuupäev"><?php echo esc_html( $entry->time ); ?></td>
-                                <td data-label="Nimi">
-                                    <strong><?php echo esc_html( $entry->name ); ?></strong><br>
-                                    <a href="mailto:<?php echo esc_attr( $entry->email ); ?>"><?php echo esc_html( $entry->email ); ?></a>
-                                </td>
-                                <td data-label="Sündmus">
-                                    <?php echo esc_html( $entry->event_type ); ?><br>
-                                    <small><?php echo esc_html( $entry->event_date ); ?></small>
-                                </td>
-                                <td data-label="Koht"><?php echo esc_html( $entry->event_location ); ?></td>
-                                <td data-label="Tegevused">
-                                    <button class="button av-toggle-msg">Vaata Sisu</button>
-                                    <a href="<?php echo wp_nonce_url( admin_url('admin-post.php?action=av_delete_entry&id=' . $entry->id), 'av_delete_action' ); ?>" class="button button-link-delete" onclick="return confirm('Olete kindel?');">Kustuta</a>
-                                    <div class="av-msg-content" style="display:none; margin-top:10px; background:#fff; padding:10px; border:1px solid #ddd;">
-                                        <?php echo nl2br( esc_html( $entry->message ) ); ?>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else : ?>
-                        <tr><td colspan="5">Päringud puuduvad.</td></tr>
-                    <?php endif; ?>
+                    <?php if ( ! empty( $entries ) ) : foreach ( $entries as $entry ) : ?>
+                    <tr>
+                        <td data-label="Kuupäev"><?php echo esc_html( $entry->time ); ?></td>
+                        <td data-label="Nimi"><strong><?php echo esc_html( $entry->name ); ?></strong><br><a href="mailto:<?php echo esc_attr( $entry->email ); ?>"><?php echo esc_html( $entry->email ); ?></a></td>
+                        <td data-label="Sündmus"><?php echo esc_html( $entry->event_type ); ?><br><small><?php echo esc_html( $entry->event_date ); ?></small></td>
+                        <td data-label="Koht"><?php echo esc_html( $entry->event_location ); ?></td>
+                        <td data-label="Tegevused">
+                            <button class="button av-toggle-msg">Vaata Sisu</button>
+                            <a href="<?php echo wp_nonce_url( admin_url('admin-post.php?action=av_delete_entry&id=' . $entry->id), 'av_delete_action' ); ?>" class="button button-link-delete" onclick="return confirm('Olete kindel?');">Kustuta</a>
+                            <div class="av-msg-content" style="display:none; margin-top:10px; background:#fff; padding:10px; border:1px solid #ddd;"><?php echo nl2br( esc_html( $entry->message ) ); ?></div>
+                        </td>
+                    </tr>
+                    <?php endforeach; else : ?><tr><td colspan="5">Päringud puuduvad.</td></tr><?php endif; ?>
                 </tbody>
             </table>
             </div>
-            <script>
-                jQuery('.av-toggle-msg').click(function(){ jQuery(this).siblings('.av-msg-content').slideToggle(); });
-            </script>
+            <script>jQuery('.av-toggle-msg').click(function(){ jQuery(this).siblings('.av-msg-content').slideToggle(); });</script>
         </div>
         <?php
     }
