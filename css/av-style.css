@@ -60,3 +60,56 @@
     margin-top: 15px;
     color: #888;
 }
+
+/* Submit Button Styles */
+.av-actions input[type="submit"] {
+    background-color: #8b5e3b;
+    width: 25%; /* Desktop width */
+    transition: background-color 0.15s ease;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-block;
+    text-align: center;
+    word-break: break-word;
+    color: white;
+    border-radius: 2rem;
+    border: 1px solid #8b5e3b; /* Fixed: Added explicit border width/style */
+    letter-spacing: inherit;
+    line-height: inherit;
+    padding-top: calc(0.667em + 2px);
+    padding-right: calc(1.333em + 2px);
+    padding-bottom: calc(0.667em + 2px);
+    padding-left: calc(1.333em + 2px);
+    text-decoration: none;
+    font-weight: 600; /* Optional: makes text pop more on the button */
+}
+
+/* Button Hover State */
+.av-actions input[type="submit"]:hover {
+    background-color: #6d4a2e; /* Slightly darker brown for hover effect */
+    border-color: #6d4a2e;
+}
+
+/* Button Disabled/Loading State */
+.av-actions input[type="submit"]:disabled {
+    background-color: #ccc;
+    border-color: #ccc;
+    cursor: not-allowed;
+}
+
+/* MOBILE RESPONSIVENESS */
+@media only screen and (max-width: 600px) {
+    .av-actions input[type="submit"] {
+        width: 100%; /* Full width on mobile */
+        display: block;
+        margin-top: 10px;
+    }
+    
+    /* Optional: Center the loader on mobile */
+    .av-loader {
+        display: block;
+        text-align: center;
+        margin-top: 10px;
+        margin-left: 0;
+    }
+}

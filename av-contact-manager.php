@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AV Contact Manager
- * Description: V3.0 - Secure form with Datepicker, Delete capability, Responsive Admin, and GDPR compliance.
- * Version: 3.0
+ * Description: V3.1 - Secure form with Datepicker, Delete capability, Responsive Admin, and GDPR compliance. Submit button CSS update.
+ * Version: 3.1
  * Author: Silver Sirp
  */
 
@@ -140,11 +140,14 @@ class AV_Contact_Manager {
         return true;
     }
 
-    public function render_shortcode() {
+public function render_shortcode() {
         ob_start();
-        if ( isset( $_POST['av_contact_submit'] ) ) {
+        
+        // FIX: Check for REQUEST_METHOD and Nonce, not the button name
+        if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
             $this->handle_submission();
         }
+        
         $this->display_form();
         return ob_get_clean();
     }
@@ -208,10 +211,22 @@ class AV_Contact_Manager {
     }
 
     private function send_client_confirmation( $name, $email, $event, $date ) {
-        $from = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
-        $headers = array( 'Content-Type: text/plain; charset=UTF-8', "From: Andres Vago <$from>" );
-        $body = "Tere $name,\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\nAndres Vago";
-        return wp_mail( $email, "Kinnitus: Päring vastu võetud", $body, $headers );
+        // Use the new Sender Email setting, or default to noreply@yourdomain.ee
+        $sender_email = get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] );
+        
+        $subject = "Kinnitus: Teie päring on vastu võetud";
+        $body  = "Tere $name,\n\n";
+        $body .= "Aitäh kirjutamast! Olen teie päringu ($event, $date) kätte saanud.\n\n";
+        $body .= "Vastan teile esimesel võimalusel.\n\n";
+        $body .= "Lugupidamisega,\nAndres Vago";
+        
+        // The "From" header now uses the domain email, avoiding the Spam flag
+        $headers = array( 
+            'Content-Type: text/plain; charset=UTF-8', 
+            "From: Andres Vago <$sender_email>" 
+        );
+        
+        return wp_mail( $email, $subject, $body, $headers );
     }
 
     private function display_form() {
@@ -246,7 +261,7 @@ class AV_Contact_Manager {
             </div>
             
             <div class="av-actions">
-                <input type="submit" name="av_contact_submit" value="Saada Päring" class="button button-primary">
+                <input type="submit" name="av_contact_submit" value="Saada päring" class="button button-primary">
                 <span class="av-loader" style="display:none;">⏳ Saatmine...</span>
             </div>
             <p class="av-gdpr-note"><small>Isikuandmeid säilitatakse 1 aasta.</small></p>
@@ -264,6 +279,7 @@ class AV_Contact_Manager {
 
     public function register_settings() {
         register_setting( 'av_contact_settings', 'av_recipient_email', 'sanitize_email' );
+        register_setting( 'av_contact_settings', 'av_sender_email', 'sanitize_email' ); // New Field
     }
 
     public function render_settings_page() {
@@ -273,7 +289,20 @@ class AV_Contact_Manager {
             <form method="post" action="options.php">
                 <?php settings_fields( 'av_contact_settings' ); do_settings_sections( 'av_contact_settings' ); ?>
                 <table class="form-table">
-                    <tr><th>Teavituse saaja e-mail:</th><td><input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email', 'andres.vago@gmail.com') ); ?>" class="regular-text"></td></tr>
+                    <tr>
+                        <th scope="row">Teavituse saaja e-mail:</th>
+                        <td>
+                            <input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email', 'andres.vago@gmail.com') ); ?>" class="regular-text">
+                            <p class="description">Siia saadetakse päringud (Sinu Gmail).</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Kirja saatja e-mail (From):</th>
+                        <td>
+                            <input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option('av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME']) ); ?>" class="regular-text">
+                            <p class="description">See peab lõppema sinu domeeniga (nt info@andresvago.ee). <strong>Ära pane siia Gmaili aadressi.</strong></p>
+                        </td>
+                    </tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
