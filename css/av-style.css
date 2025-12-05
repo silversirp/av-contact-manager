@@ -15,47 +15,63 @@
 .av-req {
     color: #cc0000;
 }
-
-/* Üldine sisestusväljade stiil (iPhone Zoom Fix) */
 .av-group input, 
 .av-group textarea {
     font-size: 16px; 
-    width: 100%; /* See tekitas märkeruuduga probleemi */
+    width: 100%;
     padding: 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
     box-sizing: border-box; 
 }
-
-/* 1. Teeme label-ist Flex konteineri. See joondab sisu automaatselt keskele. */
-.av-checkbox-group label {
-    display: flex !important;       /* Aktiveeri Flexbox */
-    align-items: center !important; /* Joonda vertikaalselt keskele */
-    font-weight: normal !important;
-    cursor: pointer;
-    line-height: 1.4;               /* Normaalne reakõrgus */
-    width: 100%;                    /* Et tekst mahuks ära */
-}
-
-/* 2. Märkeruudu stiil */
-.av-checkbox-group input[type="checkbox"] {
-    width: 18px !important;         /* Fikseeritud laius, et ei veniks */
-    height: 18px !important;        /* Fikseeritud kõrgus */
-    min-height: 18px !important;    /* Väldi teema poolt venitamist */
-    margin: 0 12px 0 0 !important;  /* Vahe: Ülalt 0, Paremalt 12px, Alt 0 */
-    box-shadow: none !important;
-    flex-shrink: 0;                 /* Keela märkeruudu kokkupressimine mobiilis */
-    position: static !important;    /* Eemalda võimalikud nihked */
-    appearance: auto;               /* Kasuta brauseri standardset välimust */
-    -webkit-appearance: checkbox;   /* Safari tugi */
-}
-
 .av-group input:focus,
 .av-group textarea:focus {
     border-color: #0073aa;
     outline: none;
     box-shadow: 0 0 0 1px #0073aa;
 }
+
+/* Flexbox Checkbox */
+.av-checkbox-group label {
+    display: flex !important;       
+    align-items: center !important; 
+    font-weight: normal !important;
+    cursor: pointer;
+    line-height: 1.4;               
+    width: 100%;                    
+}
+.av-checkbox-group input[type="checkbox"] {
+    width: 18px !important;         
+    height: 18px !important;        
+    min-height: 18px !important;    
+    margin: 0 12px 0 0 !important;  
+    box-shadow: none !important;
+    flex-shrink: 0;                 
+    position: static !important;   
+    appearance: auto;               
+    -webkit-appearance: checkbox;   
+}
+
+/* Char Counter */
+.char-counter {
+    float: right;
+    font-weight: normal;
+    font-size: 12px;
+    color: #666;
+}
+
+/* Loading Spinner */
+.av-loader {
+    display: none; /* JS toggles this */
+    margin-left: 10px;
+    font-size: 16px;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
 .av-website-field {
     display: none !important;
     visibility: hidden;
@@ -81,17 +97,12 @@
     color: #721c24;
     border: 1px solid #f5c6cb;
 }
-.av-loader {
-    margin-left: 10px;
-    font-style: italic;
-    color: #666;
-}
 .av-gdpr-note {
     margin-top: 15px;
     color: #888;
 }
 
-/* Submit Button Styles (Brown Theme) */
+/* Button */
 .av-actions input[type="submit"] {
     background-color: #8b5e3b;
     width: 25%;
@@ -100,16 +111,10 @@
     cursor: pointer;
     display: inline-block;
     text-align: center;
-    word-break: break-word;
     color: white;
     border-radius: 2rem;
     border: 1px solid #8b5e3b;
-    letter-spacing: inherit;
-    line-height: inherit;
-    padding-top: calc(0.667em + 2px);
-    padding-right: calc(1.333em + 2px);
-    padding-bottom: calc(0.667em + 2px);
-    padding-left: calc(1.333em + 2px);
+    padding: 10px 20px;
     text-decoration: none;
     font-weight: 600;
 }
@@ -123,7 +128,6 @@
     cursor: not-allowed;
 }
 
-/* MOBILE RESPONSIVENESS */
 @media only screen and (max-width: 600px) {
     .av-actions input[type="submit"] {
         width: 100%;

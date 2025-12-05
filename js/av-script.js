@@ -1,6 +1,6 @@
 jQuery(document).ready(function($) {
     
-    // 1. AUTO-SCROLL
+    // 1. AUTO-SCROLL (Handles PRG Redirect Message)
     var resultMsg = $('#av-result-message');
     if ( resultMsg.length ) {
         $('html, body').animate({
@@ -19,7 +19,22 @@ jQuery(document).ready(function($) {
         });
     }
 
-    // 3. Vormi Validatsioon
+    // 3. Character Counter
+    $('textarea[name="av_desc"]').on('input', function() {
+        var len = $(this).val().length;
+        var max = $(this).attr('maxlength');
+        var counter = $('.char-counter');
+        
+        counter.text( len + ' / ' + max );
+        
+        if ( len > max * 0.9 ) {
+            counter.css('color', '#cc0000');
+        } else {
+            counter.css('color', '#666');
+        }
+    });
+
+    // 4. Form Validation
     $('#avContactForm').on('submit', function(e) {
         var isValid = true;
         var form = $(this);
@@ -28,7 +43,7 @@ jQuery(document).ready(function($) {
         $('.av-msg').remove();
         form.find('input, textarea').css('border-color', '#ccc');
 
-        // A. Kohustuslikud väljad
+        // A. Required Fields
         form.find('[required]').each(function() {
             if( $.trim($(this).val()) === '' ) {
                 if( $(this).attr('type') === 'checkbox' && !$(this).is(':checked') ) {
@@ -42,7 +57,7 @@ jQuery(document).ready(function($) {
             }
         });
 
-        // B. E-maili formaat
+        // B. Email Format
         var emailField = form.find('input[name="av_email"]');
         var emailVal = $.trim(emailField.val());
         var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -51,17 +66,9 @@ jQuery(document).ready(function($) {
             isValid = false;
             emailField.css('border-color', '#cc0000');
             if( !firstErrorField ) firstErrorField = emailField;
-            
-            if (isValid) {
-                form.prepend('<div id="av-result-message" class="av-msg error">Palun sisestage korrektne e-mail.</div>');
-                $('html, body').animate({ scrollTop: form.offset().top - 100 }, 500);
-                firstErrorField.focus();
-                e.preventDefault();
-                return;
-            }
         }
 
-        // Peata saatmine
+        // Stop if invalid
         if ( ! isValid ) {
             e.preventDefault();
             form.prepend('<div id="av-result-message" class="av-msg error">Palun täitke kõik kohustuslikud väljad korrektselt.</div>');
@@ -70,14 +77,13 @@ jQuery(document).ready(function($) {
             return;
         }
 
-        // C. Laadimisolek
+        // C. Loading State
         var btn = form.find('input[type="submit"]');
         var loader = form.find('.av-loader');
 
-        setTimeout(function(){
-            btn.val('Saatmine...');
-            btn.prop('disabled', true);
-            loader.show();
-        }, 10);
+        btn.addClass('submitting');
+        btn.val('Saatmine...');
+        btn.prop('disabled', true);
+        loader.css('display', 'inline-block'); // Show spinner
     });
 });
