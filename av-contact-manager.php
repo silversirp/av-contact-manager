@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AV Contact Manager
- * Description: Turvaline kontaktivorm kalendri, SMTP toe ja hallatusliidesega.
- * Version: 5.1
+ * Description: V6.2 - Nutikas Reply-To loogika, Multi-instance tugi, Source URL.
+ * Version: 6.2
  * Author: Silver Sirp
  */
 
@@ -18,7 +18,7 @@ class AV_Contact_Manager {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'av_contact_entries';
 
-        // Installatsioon ja puhastus
+        // Lifecycle Hooks
         register_activation_hook( __FILE__, array( $this, 'activate_plugin' ) );
         register_deactivation_hook( __FILE__, array( $this, 'deactivate_plugin' ) );
         add_action( 'av_daily_cleanup_event', array( $this, 'cleanup_old_entries' ) );
@@ -33,12 +33,12 @@ class AV_Contact_Manager {
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
         add_action( 'admin_post_av_delete_entry', array( $this, 'handle_delete_entry' ) );
 
-        // SMTP Hook
+        // SMTP
         add_action( 'phpmailer_init', array( $this, 'configure_smtp' ) );
     }
 
     /**
-     * 1. AKTIVEERIMINE JA ANDMEBAAS
+     * 1. DATABASE
      */
     public function activate_plugin() {
         global $wpdb;
@@ -54,6 +54,7 @@ class AV_Contact_Manager {
             event_location text NOT NULL,
             message text NOT NULL,
             ip_address varchar(45) NOT NULL,
+            source_url text NOT NULL, 
             PRIMARY KEY  (id),
             KEY time_index (time),
             KEY email_index (email(50))
@@ -82,16 +83,17 @@ class AV_Contact_Manager {
     }
 
     /**
-     * 2. VARAD (CSS/JS)
+     * 2. ASSETS
      */
     public function enqueue_frontend_assets() {
         global $post;
         if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'av_contact_form' ) ) {
             header( "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://ajax.googleapis.com; style-src 'self' 'unsafe-inline' https://ajax.googleapis.com;" );
+            
             wp_enqueue_script( 'jquery-ui-datepicker' );
-            wp_enqueue_script( 'av-script', plugins_url( 'js/av-script.js', __FILE__ ), array('jquery', 'jquery-ui-datepicker'), '5.1', true );
+            wp_enqueue_script( 'av-script', plugins_url( 'js/av-script.js', __FILE__ ), array('jquery', 'jquery-ui-datepicker'), '6.1', true );
             wp_enqueue_style( 'jquery-ui-style', 'https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css' );
-            wp_enqueue_style( 'av-style', plugins_url( 'css/av-style.css', __FILE__ ), array(), '5.1' );
+            wp_enqueue_style( 'av-style', plugins_url( 'css/av-style.css', __FILE__ ), array(), '6.1' );
         }
     }
 
@@ -102,7 +104,7 @@ class AV_Contact_Manager {
     }
 
     /**
-     * 3. SMTP KONFIGURATSIOON
+     * 3. SMTP CONFIG
      */
     public function configure_smtp( $phpmailer ) {
         $smtp_host = get_option( 'av_smtp_host' );
@@ -122,13 +124,9 @@ class AV_Contact_Manager {
                 $phpmailer->SMTPAutoTLS = false;
             }
 
-            if ( $phpmailer->Port == 465 ) {
-                $phpmailer->SMTPSecure = 'ssl';
-            } elseif ( $phpmailer->Port == 587 ) {
-                $phpmailer->SMTPSecure = 'tls';
-            } else {
-                $phpmailer->SMTPSecure = ''; 
-            }
+            if ( $phpmailer->Port == 465 ) $phpmailer->SMTPSecure = 'ssl';
+            elseif ( $phpmailer->Port == 587 ) $phpmailer->SMTPSecure = 'tls';
+            else $phpmailer->SMTPSecure = ''; 
 
             $phpmailer->From = get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] );
             $phpmailer->FromName = 'Andres Vago';
@@ -136,15 +134,189 @@ class AV_Contact_Manager {
     }
 
     /**
-     * 4. VORMI LOOGIKA
+     * 4. FORM LOGIC & SHORTCODE
      */
+    
+    // Helper: Clean comma separated emails
+    private function sanitize_emails_list( $emails_string ) {
+        $emails = explode( ',', $emails_string );
+        $clean = array();
+        foreach ( $emails as $email ) {
+            $e = sanitize_email( trim( $email ) );
+            if ( is_email( $e ) ) {
+                $clean[] = $e;
+            }
+        }
+        return $clean; 
+    }
+
+    private function get_current_url() {
+        return ( isset( $_SERVER['HTTPS'] ) && $_SERVER['HTTPS'] === 'on' ? "https" : "http" ) . "://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
+    }
+
+    public function render_shortcode( $atts ) {
+        $args = shortcode_atts( array(
+            'to'       => '', 
+            'reply_to' => '', 
+            'subject'  => '', 
+        ), $atts );
+
+        ob_start();
+        if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
+            $this->handle_submission( $args );
+        }
+        $this->display_form();
+        return ob_get_clean();
+    }
+
+    private function handle_submission( $args ) {
+        function av_msg($type, $text) {
+            echo '<div id="av-result-message" class="av-msg ' . $type . '">' . $text . '</div>';
+        }
+
+        if ( ! wp_verify_nonce( $_POST['_av_nonce'], 'av_submit_form' ) ) {
+            av_msg('error', 'Turvaviga. Palun laadige leht uuesti.'); return;
+        }
+        if ( ! empty( $_POST['av_website'] ) ) { av_msg('success', 'Saadetud!'); return; }
+        
+        if ( ! isset( $_POST['av_consent'] ) ) {
+            av_msg('error', 'Palun nõustuge andmete töötlemise tingimustega.'); return;
+        }
+
+        $ip = $this->get_client_ip();
+        if ( ! $this->check_rate_limit( $ip ) ) {
+            av_msg('error', 'Liiga palju päringuid. Oodake 1 tund.'); return;
+        }
+
+        $name     = substr( sanitize_text_field( $_POST['av_name'] ), 0, 100 );
+        $email    = sanitize_email( $_POST['av_email'] );
+        $event    = substr( sanitize_text_field( $_POST['av_event'] ), 0, 100 );
+        $date     = sanitize_text_field( $_POST['av_date'] );
+        $loc      = substr( sanitize_text_field( $_POST['av_location'] ), 0, 150 );
+        $desc     = substr( sanitize_textarea_field( $_POST['av_desc'] ), 0, 5000 );
+        $url      = esc_url_raw( $this->get_current_url() ); 
+
+        if ( empty( $name ) || empty( $email ) || ! is_email( $email ) ) {
+            av_msg('error', 'Palun kontrollige välju.'); return;
+        }
+
+        global $wpdb;
+        $saved = $wpdb->insert( $this->table_name, array(
+            'time' => current_time( 'mysql' ), 'name' => $name, 'email' => $email,
+            'event_type' => $event, 'event_date' => $date, 'event_location' => $loc,
+            'message' => $desc, 'ip_address' => $ip, 'source_url' => $url 
+        ));
+
+        if ( $saved ) {
+            $_POST = array(); // Clear form
+
+            // --- 1. Määra saajad (To) ---
+            // Kui lühikoodis on "to", kasuta seda, muidu kasuta üldseadet.
+            $to_source = !empty( $args['to'] ) ? $args['to'] : get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+            $to_emails = $this->sanitize_emails_list( $to_source );
+
+            // --- 2. Määra vastamise aadress (Reply-To) ---
+            // Prioriteet: 
+            // 1. Lühikoodi 'reply_to'
+            // 2. Lühikoodi 'to' (kui reply_to puudub, siis vaikimisi läheb vastus samale aadressile, kuhu kiri saadeti)
+            // 3. Üldseadete 'Reply-To'
+            // 4. Üldseadete 'Recipient'
+            
+            $reply_to = '';
+
+            if ( !empty( $args['reply_to'] ) ) {
+                $reply_to = $args['reply_to'];
+            } elseif ( !empty( $args['to'] ) ) {
+                // Kui lühikoodis oli 'to', aga 'reply_to' mitte, kasuta KÕIKI 'to' aadresse
+                if ( !empty($to_emails) ) {
+                    // Ühendame massiivi komadega stringiks: "email1@a.ee, email2@a.ee"
+                    $reply_to = implode( ', ', $to_emails );
+                }
+            }
+            
+            // Kui ikka tühi (ehk lühikoodis polnud kumbagi), kasuta üldseadeid
+            if ( empty( $reply_to ) ) {
+                $reply_to = get_option( 'av_reply_to_email' );
+            }
+            if ( empty( $reply_to ) ) {
+                $reply_to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+            }
+
+            // Teemarea eesliide
+            $subject_prefix = !empty( $args['subject'] ) ? '[' . esc_html($args['subject']) . '] ' : '';
+
+            $admin_sent = $this->send_admin_email( $to_emails, $subject_prefix, $name, $email, $event, $date, $loc, $desc, $url );
+            $client_sent = $this->send_client_confirmation( $reply_to, $name, $email, $event, $date );
+
+            if ( $admin_sent && $client_sent ) {
+                av_msg('success', 'Teie päring on edukalt saadetud! Kinnitus on teie e-mailil.');
+            } elseif ( $admin_sent ) {
+                av_msg('success', 'Päring saadetud, kuid kinnituskirja saatmisel tekkis tõrge.');
+            } else {
+                error_log( 'AV Contact Form: Mail Error.' );
+                av_msg('error', 'Andmed salvestati, kuid e-maili saatmine ebaõnnestus.');
+            }
+        } else {
+            error_log( 'AV Contact Form: DB Error: ' . $wpdb->last_error );
+            av_msg('error', 'Andmebaasi viga.');
+        }
+    }
+
+    private function send_admin_email( $to_array, $prefix, $name, $email, $event, $date, $loc, $desc, $url ) {
+        $safe_name = str_replace( ["\r", "\n"], '', $name );
+        
+        $subject_parts = [];
+        if ( !empty($event) ) $subject_parts[] = $event;
+        $subject_parts[] = "- $name";
+        
+        $details = [];
+        if ( !empty($date) ) $details[] = $date;
+        if ( !empty($loc) ) $details[] = "@ $loc";
+        
+        $details_str = !empty($details) ? ' (' . implode(' ', $details) . ')' : '';
+        $subject = $prefix . "Päring: " . implode(' ', $subject_parts) . $details_str;
+        
+        $body  = "Nimi: $name\n";
+        $body .= "E-mail: $email\n";
+        $body .= "Sündmus: $event\n";
+        $body .= "Kuupäev: $date\n";
+        $body .= "Koht: $loc\n\n";
+        $body .= "Kirjeldus:\n$desc\n\n";
+        $body .= "---------------------------\n";
+        $body .= "Saadetud lehelt: $url";
+
+        $headers = array( 'Content-Type: text/plain; charset=UTF-8', "Reply-To: $safe_name <$email>" );
+        
+        return wp_mail( $to_array, $subject, $body, $headers );
+    }
+
+    private function send_client_confirmation( $reply_to, $name, $email, $event, $date ) {
+        if ( empty( $reply_to ) ) {
+            $reply_to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+        }
+
+        $headers = array( 'Content-Type: text/plain; charset=UTF-8' );
+
+        // KONTROLL: Kas on mitu aadressi (kas sisaldab koma)?
+        if ( strpos( $reply_to, ',' ) !== false ) {
+            // Mitme aadressi puhul ei tohi kasutada < > ümberringi, sest see lõhub formaadi.
+            // Paneme lihtsalt puhta nimekirja.
+            $headers[] = "Reply-To: $reply_to";
+        } else {
+            // Ühe aadressi puhul kasutame ilusat nimeformaati
+            $headers[] = "Reply-To: Andres Vago <$reply_to>";
+        }
+
+        $body = "Tere, $name\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\nAndres Vago";
+        
+        return wp_mail( $email, "Kinnitus: Päring vastu võetud", $body, $headers );
+    }
+
     private function get_client_ip() {
         $ip = $_SERVER['REMOTE_ADDR'];
         if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) return $ip;
         foreach ( ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP'] as $header ) {
-            if ( isset( $_SERVER[$header] ) ) {
-                return trim( explode( ',', $_SERVER[$header] )[0] );
-            }
+            if ( isset( $_SERVER[$header] ) ) return trim( explode( ',', $_SERVER[$header] )[0] );
         }
         return '0.0.0.0';
     }
@@ -158,101 +330,34 @@ class AV_Contact_Manager {
         return true;
     }
 
-    public function render_shortcode() {
-        ob_start();
-        if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
-            $this->handle_submission();
-        }
-        $this->display_form();
-        return ob_get_clean();
-    }
-
-    private function handle_submission() {
-        if ( ! wp_verify_nonce( $_POST['_av_nonce'], 'av_submit_form' ) ) {
-            echo '<div class="av-msg error">Turvaviga. Palun laadige leht uuesti.</div>'; return;
-        }
-        if ( ! empty( $_POST['av_website'] ) ) { echo '<div class="av-msg success">Saadetud!</div>'; return; }
-        
-        $ip = $this->get_client_ip();
-        if ( ! $this->check_rate_limit( $ip ) ) {
-            echo '<div class="av-msg error">Liiga palju päringuid. Palun oodake 1 tund enne uuesti proovimist.</div>'; return;
-        }
-
-        $name = substr( sanitize_text_field( $_POST['av_name'] ), 0, 100 );
-        $email = sanitize_email( $_POST['av_email'] );
-        $event = substr( sanitize_text_field( $_POST['av_event'] ), 0, 100 );
-        $date = sanitize_text_field( $_POST['av_date'] );
-        $loc = substr( sanitize_text_field( $_POST['av_location'] ), 0, 150 );
-        $desc = substr( sanitize_textarea_field( $_POST['av_desc'] ), 0, 5000 );
-
-        if ( empty( $name ) || empty( $email ) || ! is_email( $email ) ) {
-            echo '<div class="av-msg error">Palun täitke kohustuslikud väljad ja kontrollige e-maili.</div>'; return;
-        }
-
-        global $wpdb;
-        $saved = $wpdb->insert( $this->table_name, array(
-            'time' => current_time( 'mysql' ), 'name' => $name, 'email' => $email,
-            'event_type' => $event, 'event_date' => $date, 'event_location' => $loc,
-            'message' => $desc, 'ip_address' => $ip
-        ));
-
-        if ( $saved ) {
-            $admin_sent = $this->send_admin_email( $name, $email, $event, $date, $loc, $desc );
-            $client_sent = $this->send_client_confirmation( $name, $email, $event, $date );
-
-            if ( $admin_sent && $client_sent ) {
-                echo '<div class="av-msg success">Teie päring on edukalt saadetud! Kinnitus saadeti ka teie e-mailile.</div>';
-            } elseif ( $admin_sent ) {
-                echo '<div class="av-msg success">Päring on saadetud, kuid kinnituskirja saatmisel tekkis tõrge.</div>';
-            } else {
-                error_log( 'AV Contact Form: E-maili saatmine ebaõnnestus (SMTP/Mail viga).' );
-                echo '<div class="av-msg error">Andmed salvestati, kuid teavituse saatmisel tekkis viga. Võtame ühendust.</div>';
-            }
-        } else {
-            error_log( 'AV Contact Form: DB Insert Error: ' . $wpdb->last_error );
-            echo '<div class="av-msg error">Viga andmete salvestamisel. Palun proovige uuesti.</div>';
-        }
-    }
-
-    private function send_admin_email( $name, $email, $event, $date, $loc, $desc ) {
-        $to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
-        $safe_name = str_replace( ["\r", "\n"], '', $name );
-        // Admin vastab otse kliendile
-        $headers = array( 'Content-Type: text/plain; charset=UTF-8', "Reply-To: $safe_name <$email>" );
-        $body = "Nimi: $name\nE-mail: $email\nSündmus: $event\nKuupäev: $date\nKoht: $loc\n\nKirjeldus:\n$desc";
-        return wp_mail( $to, "Päring: $event ($date)", $body, $headers );
-    }
-
-    private function send_client_confirmation( $name, $email, $event, $date ) {
-        // Lae seadetest Reply-To aadress. Kui tühi, kasuta admini teavituse emaili.
-        $reply_to = get_option( 'av_reply_to_email' );
-        if ( empty( $reply_to ) ) {
-            $reply_to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
-        }
-
-        // Klient vastab otse administraatorile
-        $headers = array( 
-            'Content-Type: text/plain; charset=UTF-8',
-            "Reply-To: Andres Vago <$reply_to>" 
-        );
-        
-        $body = "Tere $name,\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\nAndres Vago";
-        return wp_mail( $email, "Kinnitus: Päring vastu võetud", $body, $headers );
-    }
-
     private function display_form() {
+        $val_name = isset($_POST['av_name']) ? esc_attr($_POST['av_name']) : '';
+        $val_email = isset($_POST['av_email']) ? esc_attr($_POST['av_email']) : '';
+        $val_event = isset($_POST['av_event']) ? esc_attr($_POST['av_event']) : '';
+        $val_date = isset($_POST['av_date']) ? esc_attr($_POST['av_date']) : '';
+        $val_loc = isset($_POST['av_location']) ? esc_attr($_POST['av_location']) : '';
+        $val_desc = isset($_POST['av_desc']) ? esc_textarea($_POST['av_desc']) : '';
+        $chk_consent = isset($_POST['av_consent']) ? 'checked' : '';
+
         ?>
         <form method="post" class="av-contact-form" id="avContactForm" novalidate>
             <?php wp_nonce_field( 'av_submit_form', '_av_nonce' ); ?>
             <div class="av-website-field"><input type="text" name="av_website" tabindex="-1" autocomplete="off"></div>
 
-            <div class="av-group"><label>Nimi <span class="av-req">*</span></label><input type="text" name="av_name" required maxlength="100"></div>
-            <div class="av-group"><label>E-mail <span class="av-req">*</span></label><input type="email" name="av_email" required maxlength="100"></div>
-            <div class="av-group"><label>Sündmus</label><input type="text" name="av_event" maxlength="100"></div>
-            <div class="av-group"><label>Kuupäev</label><input type="text" name="av_date" class="av_datepicker_input" placeholder="PP.KK.AAAA" autocomplete="off"></div>
-            <div class="av-group"><label>Koht</label><input type="text" name="av_location" maxlength="150"></div>
-            <div class="av-group"><label>Kirjeldus (max 5000 tähemärki)</label><textarea name="av_desc" rows="5" maxlength="5000"></textarea></div>
+            <div class="av-group"><label>Nimi <span class="av-req">*</span></label><input type="text" name="av_name" value="<?php echo $val_name; ?>" required maxlength="100"></div>
+            <div class="av-group"><label>E-mail <span class="av-req">*</span></label><input type="email" name="av_email" value="<?php echo $val_email; ?>" required maxlength="100"></div>
+            <div class="av-group"><label>Sündmus</label><input type="text" name="av_event" value="<?php echo $val_event; ?>" maxlength="100"></div>
+            <div class="av-group"><label>Kuupäev</label><input type="text" name="av_date" value="<?php echo $val_date; ?>" class="av_datepicker_input" placeholder="PP.KK.AAAA" autocomplete="off"></div>
+            <div class="av-group"><label>Koht</label><input type="text" name="av_location" value="<?php echo $val_loc; ?>" maxlength="150"></div>
+            <div class="av-group"><label>Kirjeldus (max 5000 tähemärki)</label><textarea name="av_desc" rows="5" maxlength="5000"><?php echo $val_desc; ?></textarea></div>
             
+            <div class="av-group av-checkbox-group" style="margin-top:15px;">
+                <label style="display:inline; font-weight:normal;">
+                    <input type="checkbox" name="av_consent" required <?php echo $chk_consent; ?>>
+                    Olen nõus, et minu andmeid töödeldakse päringule vastamiseks.
+                </label>
+            </div>
+
             <div class="av-actions">
                 <input type="submit" name="av_contact_submit" value="Saada päring" class="button button-primary">
                 <span class="av-loader" style="display:none;">⏳ Saatmine...</span>
@@ -262,9 +367,6 @@ class AV_Contact_Manager {
         <?php
     }
 
-    /**
-     * 5. ADMIN MENÜÜ JA LEHED
-     */
     public function add_admin_menu() {
         add_menu_page( 'Päringud', 'Päringud', 'av_view_submissions', 'av-contact-entries', array( $this, 'render_admin_page' ), 'dashicons-email', 26 );
         add_submenu_page( 'av-contact-entries', 'Seaded', 'Seaded', 'manage_options', 'av-contact-settings', array( $this, 'render_settings_page' ) );
@@ -273,7 +375,7 @@ class AV_Contact_Manager {
 
     public function register_settings() {
         register_setting( 'av_contact_settings', 'av_recipient_email', 'sanitize_email' );
-        register_setting( 'av_contact_settings', 'av_reply_to_email', 'sanitize_email' ); // UUS: Reply-To
+        register_setting( 'av_contact_settings', 'av_reply_to_email', 'sanitize_email' ); 
         register_setting( 'av_contact_settings', 'av_sender_email', 'sanitize_email' );
         register_setting( 'av_contact_settings', 'av_smtp_host', 'sanitize_text_field' );
         register_setting( 'av_contact_settings', 'av_smtp_port', 'absint' );
@@ -284,21 +386,32 @@ class AV_Contact_Manager {
     public function render_instructions_page() {
         ?>
         <div class="wrap">
-            <h1>Kasutusjuhend</h1>
+            <h1>Kasutusjuhend (Versioon 6.2)</h1>
+            
             <div class="card" style="max-width: 800px; margin-top: 20px;">
-                <h2>1. Vormi lisamine lehele</h2>
-                <p>Kopeeri ja aseta lühikood:</p>
-                <code style="display:block; padding:10px; background:#f0f0f1; font-size:16px;">[av_contact_form]</code>
+                <h2>1. Tavaline kasutamine</h2>
+                <code style="display:block; padding:10px; background:#f0f0f1;">[av_contact_form]</code>
             </div>
-            <div class="card" style="max-width: 800px; margin-top: 20px;">
-                <h2>2. Seadistamine (Zone Hosting)</h2>
-                <ul style="list-style: disc; margin-left: 20px;">
-                    <li><strong>Saatja aadress (From):</strong> Sinu domeeniga email (nt info@sinudomeen.ee).</li>
-                    <li><strong>Vastamise aadress (Reply-To):</strong> Sinu isiklik Gmail (sinna tulevad klientide vastused).</li>
-                    <li><strong>SMTP Host:</strong> <code>localhost</code></li>
-                    <li><strong>SMTP Port:</strong> <code>25</code></li>
-                    <li><strong>SMTP Parool:</strong> Jäta tühjaks.</li>
+
+            <div class="card" style="max-width: 800px; margin-top: 20px; border-left: 4px solid #00a0d2;">
+                <h2>2. Mitme vormi kasutamine</h2>
+                <p><strong>Näide 1: Spetsiifiline saaja</strong></p>
+                <code style="display:block; padding:10px; background:#f0f0f1;">[av_contact_form to="pulmad@andresvago.ee" subject="Pulm"]</code>
+                <p>Kliendi vastus läheb automaatselt aadressile <code>pulmad@andresvago.ee</code>.</p>
+                
+                <p><strong>Näide 2: Mitu saajat ja eraldi vastamise aadress</strong></p>
+                <code style="display:block; padding:10px; background:#f0f0f1;">[av_contact_form to="info@band.ee, manager@band.ee" reply_to="assistent@band.ee"]</code>
+
+                <p><strong>Parameetrid:</strong></p>
+                <ul style="list-style:disc; margin-left:20px;">
+                    <li><code>to</code> - Kellele kiri saadetakse. (Vaikimisi Reply-To on sama mis see aadress).</li>
+                    <li><code>reply_to</code> - Määrab eraldi aadressi, kuhu kliendi vastus läheb (kui erineb saajast).</li>
+                    <li><code>subject</code> - Lisab teemareale eesliite.</li>
                 </ul>
+            </div>
+            
+            <div class="card" style="margin-top:20px; padding:10px; background:#fff8e5; border-left:4px solid #ffba00;">
+                <strong>Zone.ee SMTP Seaded:</strong> Host: <code>localhost</code>, Port: <code>25</code>, Parool: (tühi).
             </div>
         </div>
         <?php
@@ -310,50 +423,20 @@ class AV_Contact_Manager {
             <h1>Kontaktivormi Seaded</h1>
             <form method="post" action="options.php">
                 <?php settings_fields( 'av_contact_settings' ); do_settings_sections( 'av_contact_settings' ); ?>
-                
                 <h2>Üldseaded</h2>
                 <table class="form-table">
-                    <tr>
-                        <th scope="row">Teavituse saaja:</th>
-                        <td><input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email', 'andres.vago@gmail.com') ); ?>" class="regular-text"><p class="description">Sinu isiklik email, kuhu teated saabuvad.</p></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Vastamise aadress (Reply-To):</th>
-                        <td>
-                            <input type="email" name="av_reply_to_email" value="<?php echo esc_attr( get_option('av_reply_to_email') ); ?>" class="regular-text">
-                            <p class="description">Kui klient vajutab kinnituskirjal "Vasta", läheb kiri siia. Kui jätad tühjaks, kasutatakse "Teavituse saajat".</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">Saatja aadress (From):</th>
-                        <td><input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option('av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME']) ); ?>" class="regular-text"><p class="description">Tehniline aadress (nt info@andresvago.ee), et kiri ei läheks rämpsposti.</p></td>
-                    </tr>
+                    <tr><th>Vaikimisi saaja:</th><td><input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option('av_recipient_email') ); ?>" class="regular-text"></td></tr>
+                    <tr><th>Vaikimisi vastamise aadress (Reply-To):</th><td><input type="email" name="av_reply_to_email" value="<?php echo esc_attr( get_option('av_reply_to_email') ); ?>" class="regular-text"></td></tr>
+                    <tr><th>Saatja aadress (From):</th><td><input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option('av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME']) ); ?>" class="regular-text"></td></tr>
                 </table>
-
                 <hr>
                 <h2>SMTP Seaded</h2>
-                <div style="background:#e6f7ff; padding:10px; border-left:4px solid #1890ff; margin-bottom:15px;">
-                    <strong>Soovitus Zone kasutajale:</strong> Host: <code>localhost</code>, Port: <code>25</code>, Parool: (tühi).
-                </div>
                 <table class="form-table">
-                    <tr>
-                        <th scope="row">SMTP Host:</th>
-                        <td><input type="text" name="av_smtp_host" value="<?php echo esc_attr( get_option('av_smtp_host') ); ?>" class="regular-text" placeholder="localhost"></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">SMTP Port:</th>
-                        <td><input type="number" name="av_smtp_port" value="<?php echo esc_attr( get_option('av_smtp_port', 25) ); ?>" class="small-text"></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">SMTP Kasutaja:</th>
-                        <td><input type="text" name="av_smtp_user" value="<?php echo esc_attr( get_option('av_smtp_user') ); ?>" class="regular-text"></td>
-                    </tr>
-                    <tr>
-                        <th scope="row">SMTP Parool:</th>
-                        <td><input type="password" name="av_smtp_pass" value="<?php echo esc_attr( get_option('av_smtp_pass') ); ?>" class="regular-text"><p class="description">Jäta tühjaks, kui kasutad Localhosti.</p></td>
-                    </tr>
+                    <tr><th>SMTP Host:</th><td><input type="text" name="av_smtp_host" value="<?php echo esc_attr( get_option('av_smtp_host') ); ?>" class="regular-text"></td></tr>
+                    <tr><th>SMTP Port:</th><td><input type="number" name="av_smtp_port" value="<?php echo esc_attr( get_option('av_smtp_port', 25) ); ?>" class="small-text"></td></tr>
+                    <tr><th>SMTP Kasutaja:</th><td><input type="text" name="av_smtp_user" value="<?php echo esc_attr( get_option('av_smtp_user') ); ?>" class="regular-text"></td></tr>
+                    <tr><th>SMTP Parool:</th><td><input type="password" name="av_smtp_pass" value="<?php echo esc_attr( get_option('av_smtp_pass') ); ?>" class="regular-text"></td></tr>
                 </table>
-                
                 <?php submit_button(); ?>
             </form>
         </div>
@@ -377,7 +460,7 @@ class AV_Contact_Manager {
             <h1>Sissetulnud Päringud</h1>
             <div class="av-table-container">
             <table class="wp-list-table widefat fixed striped av-responsive-table">
-                <thead><tr><th width="120">Kuupäev</th><th>Nimi / Email</th><th>Sündmus</th><th>Koht</th><th>Tegevused</th></tr></thead>
+                <thead><tr><th width="120">Kuupäev</th><th>Nimi / Email</th><th>Sündmus</th><th>Koht</th><th>Allikas</th><th>Tegevused</th></tr></thead>
                 <tbody>
                     <?php if ( ! empty( $entries ) ) : foreach ( $entries as $entry ) : ?>
                     <tr>
@@ -385,13 +468,14 @@ class AV_Contact_Manager {
                         <td data-label="Nimi"><strong><?php echo esc_html( $entry->name ); ?></strong><br><a href="mailto:<?php echo esc_attr( $entry->email ); ?>"><?php echo esc_html( $entry->email ); ?></a></td>
                         <td data-label="Sündmus"><?php echo esc_html( $entry->event_type ); ?><br><small><?php echo esc_html( $entry->event_date ); ?></small></td>
                         <td data-label="Koht"><?php echo esc_html( $entry->event_location ); ?></td>
+                        <td data-label="Allikas"><a href="<?php echo esc_url( $entry->source_url ); ?>" target="_blank">Link</a></td>
                         <td data-label="Tegevused">
-                            <button class="button av-toggle-msg">Vaata Sisu</button>
-                            <a href="<?php echo wp_nonce_url( admin_url('admin-post.php?action=av_delete_entry&id=' . $entry->id), 'av_delete_action' ); ?>" class="button button-link-delete" onclick="return confirm('Olete kindel?');">Kustuta</a>
+                            <button class="button av-toggle-msg">Vaata</button>
+                            <a href="<?php echo wp_nonce_url( admin_url('admin-post.php?action=av_delete_entry&id=' . $entry->id), 'av_delete_action' ); ?>" class="button button-link-delete" onclick="return confirm('Kustuta?');">X</a>
                             <div class="av-msg-content" style="display:none; margin-top:10px; background:#fff; padding:10px; border:1px solid #ddd;"><?php echo nl2br( esc_html( $entry->message ) ); ?></div>
                         </td>
                     </tr>
-                    <?php endforeach; else : ?><tr><td colspan="5">Päringud puuduvad.</td></tr><?php endif; ?>
+                    <?php endforeach; else : ?><tr><td colspan="6">Päringud puuduvad.</td></tr><?php endif; ?>
                 </tbody>
             </table>
             </div>

@@ -1,21 +1,13 @@
 <?php
-/**
- * Fired when the plugin is uninstalled.
- */
-
-// If uninstall not called from WordPress, then exit.
-if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
-    exit;
-}
-
+if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) exit;
 global $wpdb;
-
-// 1. Delete Database Table
 $table_name = $wpdb->prefix . 'av_contact_entries';
 $wpdb->query( "DROP TABLE IF EXISTS $table_name" );
-
-// 2. Delete Options
 delete_option( 'av_recipient_email' );
-
-// 3. Clear Scheduled Hooks
+delete_option( 'av_sender_email' );
+delete_option( 'av_reply_to_email' );
+delete_option( 'av_smtp_host' );
+delete_option( 'av_smtp_port' );
+delete_option( 'av_smtp_user' );
+delete_option( 'av_smtp_pass' );
 wp_clear_scheduled_hook( 'av_daily_cleanup_event' );

@@ -15,15 +15,41 @@
 .av-req {
     color: #cc0000;
 }
-.av-group input[type="text"],
-.av-group input[type="email"],
+
+/* Üldine sisestusväljade stiil (iPhone Zoom Fix) */
+.av-group input, 
 .av-group textarea {
-    width: 100%;
+    font-size: 16px; 
+    width: 100%; /* See tekitas märkeruuduga probleemi */
     padding: 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
-    box-sizing: border-box; /* Fixes width overflow */
+    box-sizing: border-box; 
 }
+
+/* 1. Teeme label-ist Flex konteineri. See joondab sisu automaatselt keskele. */
+.av-checkbox-group label {
+    display: flex !important;       /* Aktiveeri Flexbox */
+    align-items: center !important; /* Joonda vertikaalselt keskele */
+    font-weight: normal !important;
+    cursor: pointer;
+    line-height: 1.4;               /* Normaalne reakõrgus */
+    width: 100%;                    /* Et tekst mahuks ära */
+}
+
+/* 2. Märkeruudu stiil */
+.av-checkbox-group input[type="checkbox"] {
+    width: 18px !important;         /* Fikseeritud laius, et ei veniks */
+    height: 18px !important;        /* Fikseeritud kõrgus */
+    min-height: 18px !important;    /* Väldi teema poolt venitamist */
+    margin: 0 12px 0 0 !important;  /* Vahe: Ülalt 0, Paremalt 12px, Alt 0 */
+    box-shadow: none !important;
+    flex-shrink: 0;                 /* Keela märkeruudu kokkupressimine mobiilis */
+    position: static !important;    /* Eemalda võimalikud nihked */
+    appearance: auto;               /* Kasuta brauseri standardset välimust */
+    -webkit-appearance: checkbox;   /* Safari tugi */
+}
+
 .av-group input:focus,
 .av-group textarea:focus {
     border-color: #0073aa;
@@ -40,6 +66,10 @@
     padding: 15px;
     margin-bottom: 20px;
     border-radius: 4px;
+}
+#av-result-message {
+    scroll-margin-top: 100px;
+    outline: none;
 }
 .av-msg.success {
     background-color: #d4edda;
@@ -61,10 +91,10 @@
     color: #888;
 }
 
-/* Submit Button Styles */
+/* Submit Button Styles (Brown Theme) */
 .av-actions input[type="submit"] {
     background-color: #8b5e3b;
-    width: 25%; /* Desktop width */
+    width: 25%;
     transition: background-color 0.15s ease;
     box-sizing: border-box;
     cursor: pointer;
@@ -73,7 +103,7 @@
     word-break: break-word;
     color: white;
     border-radius: 2rem;
-    border: 1px solid #8b5e3b; /* Fixed: Added explicit border width/style */
+    border: 1px solid #8b5e3b;
     letter-spacing: inherit;
     line-height: inherit;
     padding-top: calc(0.667em + 2px);
@@ -81,16 +111,12 @@
     padding-bottom: calc(0.667em + 2px);
     padding-left: calc(1.333em + 2px);
     text-decoration: none;
-    font-weight: 600; /* Optional: makes text pop more on the button */
+    font-weight: 600;
 }
-
-/* Button Hover State */
 .av-actions input[type="submit"]:hover {
-    background-color: #6d4a2e; /* Slightly darker brown for hover effect */
+    background-color: #6d4a2e;
     border-color: #6d4a2e;
 }
-
-/* Button Disabled/Loading State */
 .av-actions input[type="submit"]:disabled {
     background-color: #ccc;
     border-color: #ccc;
@@ -100,12 +126,10 @@
 /* MOBILE RESPONSIVENESS */
 @media only screen and (max-width: 600px) {
     .av-actions input[type="submit"] {
-        width: 100%; /* Full width on mobile */
+        width: 100%;
         display: block;
         margin-top: 10px;
     }
-    
-    /* Optional: Center the loader on mobile */
     .av-loader {
         display: block;
         text-align: center;
