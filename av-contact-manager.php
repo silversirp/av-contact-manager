@@ -412,7 +412,7 @@ class AV_Contact_Manager {
             </div>
 
             <div class="av-actions">
-                <input type="submit" name="av_contact_submit" value="Saada päring" class="button button-primary">
+                <input type="submit" name="av_contact_submit" value="Saada päring" class="wp-element-button">
                 <span class="av-loader" style="display:none;">⏳</span>
             </div>
             <p class="av-gdpr-note"><small>Isikuandmeid säilitatakse 1 aasta.</small></p>
