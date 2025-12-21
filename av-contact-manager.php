@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AV Contact Manager
- * Description: V6.7 - Subject Prefix saved to DB. Admin table shows Subject instead of "Link".
- * Version: 6.7
+ * Description: V6.8 - Subject Prefix saved to DB. Admin table shows Subject instead of "Link".
+ * Version: 6.8
  * Author: Silver Sirp
  */
 
@@ -96,8 +96,19 @@ class AV_Contact_Manager {
      */
     public function send_csp_header() {
         global $post;
+
         if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'av_contact_form' ) ) {
-            header( "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://ajax.googleapis.com; style-src 'self' 'unsafe-inline' https://ajax.googleapis.com;" );
+
+            header(
+                "Content-Security-Policy: " .
+                "default-src 'self'; " .
+                "script-src 'self' 'unsafe-inline' https://ajax.googleapis.com https://www.youtube.com https://www.googletagmanager.com https://www.google-analytics.com; " .
+                "style-src 'self' 'unsafe-inline' https://ajax.googleapis.com; " .
+                "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; " .
+                "img-src 'self' https://i.ytimg.com https://secure.gravatar.com data:; " .
+                "font-src 'self' data:; " .
+                "worker-src 'self' blob:;"
+            );
         }
     }
 
