@@ -26,7 +26,7 @@ A lightweight WordPress plugin providing a GDPR-conscious contact/inquiry form v
 
 1. Copy the plugin folder into `wp-content/plugins/`, or upload `av-contact-manager.zip` via **Plugins → Add New → Upload Plugin** in WP admin.
 2. Activate **AV Contact Manager** from the Plugins page.
-3. Go to **Päringud → Seaded** to configure the default recipient, reply-to, sender, and SMTP settings.
+3. Go to **Päringud → Seaded** and set the default recipient email — the form will refuse submissions until either this or the shortcode's `to` attribute is configured.
 4. Add `[av_contact_form]` to any page or post.
 
 ## Usage

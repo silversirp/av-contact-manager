@@ -173,7 +173,7 @@ class AV_Contact_Manager {
             else $phpmailer->SMTPSecure = ''; 
 
             $phpmailer->From = get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] );
-            $phpmailer->FromName = 'Andres Vago';
+            $phpmailer->FromName = get_bloginfo( 'name' );
         }
     }
 
@@ -262,6 +262,11 @@ class AV_Contact_Manager {
             av_msg('error', 'Palun nõustuge andmete töötlemise tingimustega.'); return;
         }
 
+        if ( empty( $args['to'] ) && empty( get_option( 'av_recipient_email' ) ) ) {
+            error_log( 'AV Contact Form: recipient email is not configured.' );
+            av_msg('error', 'Vorm ei ole seadistatud. Palun võtke ühendust lehe haldajaga.'); return;
+        }
+
         $ip = $this->get_client_ip();
         if ( ! $this->check_rate_limit( $ip ) ) {
             av_msg('error', 'Liiga palju päringuid. Oodake 1 tund.'); return;
@@ -300,7 +305,7 @@ class AV_Contact_Manager {
         ));
 
         if ( $saved ) {
-            $to_source = !empty( $args['to'] ) ? $args['to'] : get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+            $to_source = !empty( $args['to'] ) ? $args['to'] : get_option( 'av_recipient_email' );
             $to_emails = $this->sanitize_emails_list( $to_source );
 
             $reply_to = '';
@@ -315,7 +320,7 @@ class AV_Contact_Manager {
                 $reply_to = get_option( 'av_reply_to_email' );
             }
             if ( empty( $reply_to ) ) {
-                $reply_to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+                $reply_to = get_option( 'av_recipient_email' );
             }
 
             $subject_text = !empty( $subj_prefix ) ? '[' . $this->sanitize_header($subj_prefix) . '] ' : '';
@@ -369,19 +374,20 @@ class AV_Contact_Manager {
 
     private function send_client_confirmation( $reply_to, $name, $email, $event, $date ) {
         if ( empty( $reply_to ) ) {
-            $reply_to = get_option( 'av_recipient_email', 'andres.vago@gmail.com' );
+            $reply_to = get_option( 'av_recipient_email' );
         }
-        
+
+        $site_name = $this->sanitize_header( get_bloginfo( 'name' ) );
         $reply_to = $this->sanitize_header( $reply_to );
         $headers = array( 'Content-Type: text/plain; charset=UTF-8' );
 
         if ( strpos( $reply_to, ',' ) !== false ) {
             $headers[] = "Reply-To: $reply_to";
         } else {
-            $headers[] = "Reply-To: Andres Vago <$reply_to>";
+            $headers[] = "Reply-To: $site_name <$reply_to>";
         }
 
-        $body = "Tere, $name\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\nAndres Vago";
+        $body = "Tere, $name\n\nOlen teie päringu ($event, $date) kätte saanud ja vastan esimesel võimalusel.\n\nLugupidamisega,\n$site_name";
         return wp_mail( $email, "Kinnitus: Päring vastu võetud", $body, $headers );
     }
 
