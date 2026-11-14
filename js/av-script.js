@@ -35,10 +35,16 @@ jQuery(document).ready(function($) {
     });
 
     // 4. Form Validation
+    var avLoadedAt = Date.now();
+
     $('#avContactForm').on('submit', function(e) {
         var isValid = true;
         var form = $(this);
         var firstErrorField = null;
+
+        // Anti-spam: JS token + seconds spent on the page (bots without JS won't send this)
+        var elapsed = Math.round((Date.now() - avLoadedAt) / 1000);
+        form.find('input[name="av_js"]').val(form.data('av-token') + '|' + elapsed);
         
         $('.av-msg').remove();
         form.find('input, textarea').css('border-color', '#ccc');
