@@ -54,7 +54,6 @@ class AV_Contact_Manager {
         // Frontend
         add_shortcode( 'av_contact_form', array( $this, 'render_shortcode' ) );
         add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
-        add_action( 'send_headers', array( $this, 'send_csp_header' ) );
 
         // Admin
         add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
@@ -181,25 +180,6 @@ class AV_Contact_Manager {
      */
     private function turnstile_enabled() {
         return get_option( 'av_turnstile_site_key' ) && get_option( 'av_turnstile_secret' );
-    }
-
-    public function send_csp_header() {
-        global $post;
-
-        if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'av_contact_form' ) ) {
-
-            header(
-                "Content-Security-Policy: " .
-                "default-src 'self'; " .
-                "script-src 'self' 'unsafe-inline' https://ajax.googleapis.com https://www.youtube.com https://www.googletagmanager.com https://www.google-analytics.com https://challenges.cloudflare.com; " .
-                "style-src 'self' 'unsafe-inline' https://ajax.googleapis.com; " .
-                "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com; " .
-                "connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com; " .
-                "img-src 'self' https://i.ytimg.com https://secure.gravatar.com data:; " .
-                "font-src 'self' data:; " .
-                "worker-src 'self' blob:;"
-            );
-        }
     }
 
     public function enqueue_frontend_assets() {
