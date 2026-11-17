@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AV Contact Manager
  * Description: V7.0 - Spam protection: Cloudflare Turnstile, JS/time check, content filter, spam folder, safe confirmation e-mail.
- * Version: 7.0
+ * Version: 7.0.1
  * Author: Silver Sirp
  */
 
@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class AV_Contact_Manager {
 
-    const VERSION    = '7.0';
+    const VERSION    = '7.0.1';
     const DB_VERSION = '2';
 
     // Field limits
@@ -255,7 +255,7 @@ class AV_Contact_Manager {
             elseif ( $phpmailer->Port == 587 ) $phpmailer->SMTPSecure = 'tls';
             else $phpmailer->SMTPSecure = '';
 
-            $phpmailer->From = get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] );
+            $phpmailer->From = get_option( 'av_sender_email', $this->default_sender_email() );
             $phpmailer->FromName = get_bloginfo( 'name' );
         }
     }
@@ -308,10 +308,17 @@ class AV_Contact_Manager {
     }
 
     private function get_current_url() {
+        if ( empty( $_SERVER['HTTP_HOST'] ) ) return home_url( '/' );
         $protocol = is_ssl() ? 'https' : 'http';
-        $host = sanitize_text_field( $_SERVER['HTTP_HOST'] );
-        $uri = esc_url_raw( $_SERVER['REQUEST_URI'] );
+        $host = sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) );
+        $uri = isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '/';
         return $protocol . '://' . $host . $uri;
+    }
+
+    /** Fallback From address; uses the site URL so it also works in WP-CLI/cron (no SERVER_NAME there). */
+    private function default_sender_email() {
+        $host = wp_parse_url( home_url(), PHP_URL_HOST );
+        return 'noreply@' . preg_replace( '/^www\./', '', $host ? $host : 'localhost' );
     }
 
     private function post_field( $key ) {
@@ -453,7 +460,7 @@ class AV_Contact_Manager {
             }
         }
 
-        if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
+        if ( isset( $_SERVER['REQUEST_METHOD'] ) && $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['_av_nonce'] ) ) {
             $this->handle_submission( $args );
         }
 
@@ -662,7 +669,7 @@ class AV_Contact_Manager {
     }
 
     private function get_client_ip() {
-        $ip = $_SERVER['REMOTE_ADDR'];
+        $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? $_SERVER['REMOTE_ADDR'] : '';
         if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) return $ip;
         foreach ( array( 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP' ) as $header ) {
             if ( isset( $_SERVER[ $header ] ) ) return trim( explode( ',', $_SERVER[ $header ] )[0] );
@@ -781,7 +788,7 @@ class AV_Contact_Manager {
                 <table class="form-table">
                     <tr><th>Vaikimisi saaja:</th><td><input type="email" name="av_recipient_email" value="<?php echo esc_attr( get_option( 'av_recipient_email' ) ); ?>" class="regular-text"></td></tr>
                     <tr><th>Vaikimisi vastamise aadress (Reply-To):</th><td><input type="email" name="av_reply_to_email" value="<?php echo esc_attr( get_option( 'av_reply_to_email' ) ); ?>" class="regular-text"></td></tr>
-                    <tr><th>Saatja aadress (From):</th><td><input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option( 'av_sender_email', 'noreply@' . $_SERVER['SERVER_NAME'] ) ); ?>" class="regular-text"></td></tr>
+                    <tr><th>Saatja aadress (From):</th><td><input type="email" name="av_sender_email" value="<?php echo esc_attr( get_option( 'av_sender_email', $this->default_sender_email() ) ); ?>" class="regular-text"></td></tr>
                 </table>
                 <hr>
                 <h2>Spämmikaitse</h2>
